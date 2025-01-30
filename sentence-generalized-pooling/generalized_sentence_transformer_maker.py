@@ -1,6 +1,6 @@
 from sentence_transformers import SentenceTransformer
 from sentence_transformers.models import Transformer, Pooling
-from sentence_pooling import MultiHeadGeneralizedPooling
+from .multihead_generalized_pooling import MultiHeadGeneralizedPooling
 
 class GeneralizedSentenceTransformerMaker:
     def __init__(self, model_name: SentenceTransformer, pooling_type, initalize, device: str = 'cpu'):
