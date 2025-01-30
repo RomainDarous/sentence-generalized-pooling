@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="sentence-generalized-pooling",
-    version="0.2.6",
+    version="0.2.7",
     packages=find_packages(),
     install_requires=[
         "torch>=1.7.0",
