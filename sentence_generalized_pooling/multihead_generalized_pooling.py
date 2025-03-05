@@ -215,33 +215,28 @@ class MultiHeadGeneralizedPooling(nn.Module):
         1. Saves the configuration dictionary to a file named "config.json" in the specified directory.
         2. Depending on the pooling type, saves the weights of the pooling layer to a file named "multihead_pooling_weights.pt" in the specified directory.
             - For ADDITIVE pooling type, saves the weights of P, W1, and W2.
-            - For DOT_PRODUCT pooling type, saves the weights of P_K and Q.
+            - For deterministic pooling types, no weights to save.
         """
         # Save configuration as before
         with open(os.path.join(save_dir, "config.json"), "w") as fOut:
             json.dump(self.get_config_dict(), fOut, indent=4)
         
-        pooling_weights = {}
 
         if self.pooling_type == self.ADDITIVE :
             # Save weights of the pooling layer (P, W1, W2)
+            pooling_weights = {}
             pooling_weights = {
                 "P": [p.weight.data for p in self.P],
                 "W1": [w.weight.data for w in self.W1],
                 "W2": [w.weight.data for w in self.W2]
             }
-        
-        elif self.pooling_type == self.DOT_PRODUCT :
-            # Save weights of the pooling layer (P, W1, W2)
-            pooling_weights = {
-                "P_K": [p.weight.data for p in self.P_K],
-                "Q": [w.weight.data for w in self.Q],
-            }
-        else :
+            # Save as separate files
+            torch.save(pooling_weights, os.path.join(save_dir, "multihead_pooling_weights.pt"))
+
+        elif self.pooling_type != self.MEAN_POOLING and self.pooling_type != self.MAX_POOLING:
             raise ValueError(f"Unsupported pooling type: {self.pooling_type}")
         
-        # Save as separate files
-        torch.save(pooling_weights, os.path.join(save_dir, "multihead_pooling_weights.pt"))
+        
 
         
     @staticmethod
@@ -263,24 +258,14 @@ class MultiHeadGeneralizedPooling(nn.Module):
         # Load the model with configuration
         model = MultiHeadGeneralizedPooling(**config)
 
-        # Load the weights for the pooling layer
-        pooling_weights = torch.load(os.path.join(load_dir, "multihead_pooling_weights.pt"),
-                                     map_location=torch.device(device))
-        
-        if model.pooling_type == model.ADDITIVE :
-            # Assign loaded weights to the pooling layers
+        if model.pooling_type == model.ADDITIVE_POOLING :
+            # Load the weights for the pooling layer
+            pooling_weights = torch.load(os.path.join(load_dir, "multihead_pooling_weights.pt"),
+                                        map_location=torch.device(device))
             for i in range(model.num_heads):
                 model.P[i].weight.data = pooling_weights["P"][i]
                 model.W1[i].weight.data = pooling_weights["W1"][i]
                 model.W2[i].weight.data = pooling_weights["W2"][i]
-
-        elif model.pooling_type == model.DOT_PRODUCT :
-            # Assign loaded weights to the pooling layers
-            for i in range(model.num_heads):
-                model.P_K[i].weight.data = pooling_weights["P_K"][i]
-                model.Q[i].weight.data = pooling_weights["Q"][i]
-        else :
-            raise ValueError(f"Unsupported pooling type: {model.pooling_type}")
 
         return model
 
