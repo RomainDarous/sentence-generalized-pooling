@@ -16,17 +16,25 @@ class GeneralizedSentenceTransformerMaker:
         
         # Step 2: Extract the transformer and the dense layer
         self.transformer = self.existing_model[0]  # Transformer
-        self.dense_layer = self.existing_model[2]  # Compression dense layer
+
 
         # Step 3: Initialize the custom pooling layer
         self.pooling = MultiHeadGeneralizedPooling(pooling_type, token_dim=self.transformer.get_word_embedding_dimension(), initialize=initalize)
 
         # Step 4: Build the new SentenceTransformer model with modified architecture
-        self.new_model = SentenceTransformer(modules=[
-            self.transformer, 
-            self.pooling, 
-            self.dense_layer
-        ], device=device)
+        if len(self.existing_model) >= 3 :
+            self.dense_layer = self.existing_model[2]  # Compression dense layer
+            self.new_model = SentenceTransformer(modules=[
+                self.transformer, 
+                self.pooling, 
+                self.dense_layer
+            ], device=device)
+        else : 
+            self.new_model = SentenceTransformer(modules=[
+                self.transformer, 
+                self.pooling, 
+            ], device=device)
+
 
     def __str__(self) -> str:
         """Prints the architecture of the newly built model.

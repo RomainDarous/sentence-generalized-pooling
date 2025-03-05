@@ -15,8 +15,9 @@ import json
 
 class MultiHeadGeneralizedPooling(nn.Module):
     # Pooling type
-    ADDITIVE = 0
-    DOT_PRODUCT = 1
+    ADDITIVE_POOLING = 0
+    MAX_POOLING = 1
+    MEAN_POOLING = 2
 
     # Wieght initialization for additive pooling
     MEAN = 0
@@ -26,15 +27,17 @@ class MultiHeadGeneralizedPooling(nn.Module):
 
     def __init__(self, pooling_type:int, token_dim: int = 768, sentence_dim: int = 768, num_heads: int = 8, initialize: int=2) -> None:
         """
-        Initialize the MultiHeadGeneralizedPooling class based on multi-head pooling formula. If mean_pooling_init is True, initialize the pooling mechanism
-        to behave like mean pooling (i.e., equal weights for all tokens across heads).
+        MultiHeadGeneralizedPooling class implements a multi-head pooling mechanism for performing sentence embedding from token embeddings.
         
-        Args:
-            embedding_dim (int): The dimension of the token embeddings (output of the transformer).
-            hidden_dim (int): The size of the hidden layer used in each head for the pooling computation.
-            num_heads (int): The number of attention heads (I in the formula).
-            initialize (str): Sets the initialization methods for the weights : 'mean' (0), 'noised' (1) or 'random' (2)
+        Attributes:
+            num_heads (int): The number of attention heads.
+            head_dim (int): The dimension of each head.
+            sentence_dim (int): The dimension of the sentence embeddings.
+            token_dim (int): The dimension of the token embeddings.
+            initialize (int): Sets the initialization method for the weights: MEAN (0), NOISED (1), or RANDOM (2).
+            pooling_type (int): The type of pooling to be used: ADDITIVE or DOT_PRODUCT.
         """
+
         super(MultiHeadGeneralizedPooling, self).__init__()
         
         self.num_heads = num_heads
@@ -44,58 +47,48 @@ class MultiHeadGeneralizedPooling(nn.Module):
         self.hidden_dim = 4 * self.head_dim
         self.initialize = initialize
         self.pooling_type = pooling_type
+
+        assert sentence_dim == token_dim
         
         # Initialize pooling
-        if pooling_type == self.ADDITIVE :
-            self.initialize_additive_pooling()
-        elif pooling_type == self.DOT_PRODUCT :
-            self.initialize_dot_product_pooling()
-        
-        else :
+        if pooling_type == self.ADDITIVE_POOLING :
+            self.initialize_additive_pooling()        
+        elif pooling_type != self.MEAN_POOLING or pooling_type != self.MAX_POOLING :
             raise ValueError(f"Unsupported pooling type: {self.pooling_type}")
     
-    def initialize_dot_product_pooling(self) -> None :
-        # Define learnable weights and biases for each head
-        self.Q = nn.ModuleList([nn.Linear(self.head_dim, 1) for _ in range(self.num_heads)]) # Projection matrices to apply
-        self.P_K = nn.ModuleList([nn.Linear(self.token_dim, self.head_dim) for _ in range(self.num_heads)]) # Projection matrices to apply
-
-        # Initialize weights using Xavier initialization
-        for i in range(self.num_heads):
-            nn.init.xavier_uniform_(self.Q[i].weight)
-            nn.init.zeros_(self.Q[i].bias)
-            nn.init.xavier_uniform_(self.P_K[i].weight)
-            nn.init.zeros_(self.P_K[i].bias)
-
     
-    def forward(self, features: dict[str, torch.Tensor], **kwargs) -> dict   [str, torch.Tensor]:
-        if self.pooling_type == self.ADDITIVE :
-            return self.forward_additive(features, **kwargs)
-        else : 
-            return self.forward_dot_product(features, **kwargs)
+    def forward(self, features: dict[str, torch.Tensor], **kwargs) -> dict [str, torch.Tensor]:
+        """
+        Forward pass for the multi-head generalized pooling layer.
 
-    def forward_dot_product(self, features: dict[str, torch.Tensor], **kwargs) -> dict   [str, torch.Tensor]:
-        attention_mask = features["attention_mask"].unsqueeze(-1)  # (batch_size, seq_len, 1)
-
-        head_outputs = []  # To store output from each head
-        H = features["token_embeddings"] # (batch_size, seq_len, token_dim)
-        for i in range(self.num_heads):
-
-            K_i = self.P_K[i](H) # (batch_size, seq_len, head_dim) for head i
-            Q_i = self.Q[i]  # (batch_size, head_dim, 1) for head i
-            A_i = Q_i(K_i) / math.sqrt(self.head_dim)  # (batch_size, seq_len, 1)
-            A_i = F.softmax(A_i  + attention_mask.log(), dim=1)  # (batch_size, seq_len)
-
-            # Apply attention weights
-            v_i = torch.sum(K_i * A_i, dim=1)  # Weighted sum (batch_size, head_dim)
-            head_outputs.append(v_i)  # Store the output of this head
+        Args:
+            features (dict[str, torch.Tensor]): A dictionary containing feature tensors.
+            **kwargs: Additional keyword arguments.
+        Returns:
+            dict[str, torch.Tensor]: A dictionary containing the pooled feature tensors.
+            The pooling operation is determined by the `pooling_type` attribute. If `pooling_type`
+            is `ADDITIVE`, the `forward_additive` method is used. Otherwise, the `forward_dot_product`
+            method is used.
+        """
         
-        # Concatenate outputs from all heads along the embedding dimension
-        pooled_output = torch.cat(head_outputs, dim=-1)  # (batch_size, num_heads * hidden_dim = self.token_dim)
-        assert pooled_output.shape[1] == self.sentence_dim
+        if self.pooling_type == self.ADDITIVE_POOLING :
+            return self.forward_additive(features, **kwargs)
+        elif self.pooling_type == self.MEAN_POOLING :
+            H = features["token_embeddings"] # (batch_size, seq_len, token_dim)
+            pooled_output = torch.mean(H, dim=1)  # Mean pooling over the sequence length
+            assert pooled_output.shape[1] == self.sentence_dim
+            features["sentence_embedding"] = pooled_output
+            return features  # Return the final multi-head pooled sentence embedding
 
-        features["sentence_embedding"] = pooled_output
-        return features  # Return the final multi-head pooled sentence embedding
-    
+        elif self.pooling_type == self.MAX_POOLING : 
+            H = features["token_embeddings"] # (batch_size, seq_len, token_dim)
+            pooled_output, _ = torch.max(H, dim=1)  # Max pooling over the sequence length
+            assert pooled_output.shape[1] == self.sentence_dim
+            features["sentence_embedding"] = pooled_output
+            return features  # Return the final multi-head pooled sentence embedding
+        else :
+            raise ValueError(f"Unsupported pooling type: {self.pooling_type}")
+         
 
     def initialize_additive_pooling(self) -> None:
         """
@@ -142,7 +135,7 @@ class MultiHeadGeneralizedPooling(nn.Module):
 
     def forward_additive(self, features: dict[str, torch.Tensor], **kwargs) -> dict   [str, torch.Tensor]:
         """
-        Perform multi-head generalized pooling on the token embeddings using the given formula.
+        Perform multi-head generalized pooling on the token embeddings using the formula given in the research paper.
         
         Args:
             features (dict[str, torch.Tensor]): A dictionary containing:
@@ -153,6 +146,7 @@ class MultiHeadGeneralizedPooling(nn.Module):
         Returns:
             torch.Tensor: The pooled sentence embeddings (batch_size, num_heads * embedding_dim).
         """
+
         attention_mask = features["attention_mask"].unsqueeze(-1)  # (batch_size, 1, seq_len)
 
         head_outputs = []  # To store output from each head
@@ -185,12 +179,44 @@ class MultiHeadGeneralizedPooling(nn.Module):
         return features  # Return the final multi-head pooled sentence embedding
 
     def get_config_dict(self) -> dict[str, float]:
+        """
+        Returns a dictionary containing the configuration parameters of the pooling layer.
+        Returns:
+            dict[str, float]: A dictionary with the following keys:
+                - "sentence_dim": Dimension of the sentence embeddings.
+                - "token_dim": Dimension of the token embeddings.
+                - "num_heads": Number of attention heads.
+                - "initialize": Initialization parameter for the pooling layer.
+                - "pooling_type": Type of pooling used.
+        """
         return {"sentence_dim": self.sentence_dim, "token_dim": self.token_dim, "num_heads": self.num_heads, "initialize": self.initialize, "pooling_type" : self.pooling_type}
 
     def get_sentence_embedding_dimension(self) -> int:
+        """
+        Returns the dimension of the sentence embeddings.
+        This method provides the dimensionality of the sentence embeddings
+        used in the model.
+
+        Returns:
+            int: The dimension of the sentence embeddings.
+        """
+
         return self.sentence_dim
     
     def save(self, save_dir: str, **kwargs) -> None:
+        """
+        Saves the configuration and weights of the pooling layer to the specified directory.
+        
+        Args:
+            save_dir (str): The directory where the configuration and weights will be saved.
+            **kwargs: Additional keyword arguments.
+
+        The method performs the following steps:
+        1. Saves the configuration dictionary to a file named "config.json" in the specified directory.
+        2. Depending on the pooling type, saves the weights of the pooling layer to a file named "multihead_pooling_weights.pt" in the specified directory.
+            - For ADDITIVE pooling type, saves the weights of P, W1, and W2.
+            - For DOT_PRODUCT pooling type, saves the weights of P_K and Q.
+        """
         # Save configuration as before
         with open(os.path.join(save_dir, "config.json"), "w") as fOut:
             json.dump(self.get_config_dict(), fOut, indent=4)
@@ -219,7 +245,17 @@ class MultiHeadGeneralizedPooling(nn.Module):
 
         
     @staticmethod
-    def load(load_dir: str, **kwargs) -> "MultiHeadGeneralizedPooling":
+    def load(load_dir: str, device: str = 'cpu', **kwargs) -> "MultiHeadGeneralizedPooling":
+        """
+        Load a MultiHeadGeneralizedPooling model from a specified directory.
+        Args:
+            load_dir (str): The directory from which to load the model configuration and weights.
+            device (str, optional): The device on which to load the model (e.g., 'cpu' or 'cuda'). Defaults to 'cpu'.
+            **kwargs: Additional keyword arguments.
+        Returns:
+            MultiHeadGeneralizedPooling: The loaded model with the specified configuration and weights.
+        """
+
         # Load configuration as before
         with open(os.path.join(load_dir, "config.json")) as fIn:
             config = json.load(fIn)
@@ -228,7 +264,8 @@ class MultiHeadGeneralizedPooling(nn.Module):
         model = MultiHeadGeneralizedPooling(**config)
 
         # Load the weights for the pooling layer
-        pooling_weights = torch.load(os.path.join(load_dir, "multihead_pooling_weights.pt"))
+        pooling_weights = torch.load(os.path.join(load_dir, "multihead_pooling_weights.pt"),
+                                     map_location=torch.device(device))
         
         if model.pooling_type == model.ADDITIVE :
             # Assign loaded weights to the pooling layers
