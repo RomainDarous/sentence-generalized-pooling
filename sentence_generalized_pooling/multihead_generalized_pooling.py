@@ -53,7 +53,7 @@ class MultiHeadGeneralizedPooling(nn.Module):
         # Initialize pooling
         if pooling_type == self.ADDITIVE_POOLING :
             self.initialize_additive_pooling()        
-        elif pooling_type != self.MEAN_POOLING or pooling_type != self.MAX_POOLING :
+        elif pooling_type != self.MEAN_POOLING and pooling_type != self.MAX_POOLING :
             raise ValueError(f"Unsupported pooling type: {self.pooling_type}")
     
     
